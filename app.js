@@ -1,3 +1,4 @@
+/* ===== FIREBASE CONFIG ===== */
 var firebaseConfig = {
     apiKey: "AIzaSyDuzmtCpChGwOsVuRReNq1JwXkSc9LyHg0",
     authDomain: "support-link-box-reports.firebaseapp.com",
@@ -9,39 +10,51 @@ var firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
-var db = firebase.database();
+var auth = firebase.auth();
+var db = firebase.firestore();
+var storage = firebase.storage();
 
-var ADMINS = {
-    'Md_Shihab_Khan': { password: 'Shihab909', name: 'Md Shihab Khan' },
-    'Mamun_Aravi': { password: 'Mamun809', name: 'Mamun Aravi' },
-    'Shuvo_Sutradhar': { password: 'Shuvo709', name: 'Shuvo Sutradhar' },
-    'ShaDat_Hossain': { password: 'Shadat609', name: 'ShaDat Hossain' },
-    'Ariyan_Ahmed_Rubel': { password: 'Rubel509', name: 'Ariyan Ahmed Rubel' },
-    'MD_Mustakim_Islam': { password: 'Mustakim409', name: 'MD Mustakim Islam' }
+/* ===== ADMIN DISPLAY NAMES (email → name mapping) ===== */
+var ADMIN_NAMES = {
+    'shihab@linkbox.com': 'Md Shihab Khan',
+    'mamun@linkbox.com': 'Mamun Aravi',
+    'shuvo@linkbox.com': 'Shuvo Sutradhar',
+    'shadat@linkbox.com': 'ShaDat Hossain',
+    'rubel@linkbox.com': 'Ariyan Ahmed Rubel',
+    'mustakim@linkbox.com': 'MD Mustakim Islam'
 };
 
 var currentAdmin = null;
 var allReports = {};
 var singleFiles = [];
 var multipleFiles = [];
+var unsubscribe = null;
 
 function $(id) { return document.getElementById(id); }
 
+/* ===== INIT ===== */
 document.addEventListener('DOMContentLoaded', function() {
-    checkSession();
+    initAuthListener();
     initEvents();
     setDefaultDate();
 });
 
-function checkSession() {
-    var s = localStorage.getItem('reportAdmin');
-    if (s) {
-        try {
-            var a = JSON.parse(s);
-            if (ADMINS[a.userId]) { currentAdmin = a; showApp(); return; }
-        } catch(e) {}
-    }
-    showLogin();
+/* ===== AUTH STATE LISTENER ===== */
+function initAuthListener() {
+    auth.onAuthStateChanged(function(user) {
+        if (user) {
+            currentAdmin = {
+                uid: user.uid,
+                email: user.email,
+                name: ADMIN_NAMES[user.email] || user.email.split('@')[0]
+            };
+            showApp();
+        } else {
+            currentAdmin = null;
+            if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+            showLogin();
+        }
+    });
 }
 
 function showLogin() {
@@ -56,6 +69,7 @@ function showApp() {
     loadReports();
 }
 
+/* ===== EVENT LISTENERS ===== */
 function initEvents() {
     $('loginForm').addEventListener('submit', handleLogin);
 
@@ -63,20 +77,14 @@ function initEvents() {
         var inp = $('loginPass');
         var ic = $('togglePass');
         if (inp.type === 'password') {
-            inp.type = 'text';
-            ic.classList.remove('fa-eye');
-            ic.classList.add('fa-eye-slash');
+            inp.type = 'text'; ic.classList.remove('fa-eye'); ic.classList.add('fa-eye-slash');
         } else {
-            inp.type = 'password';
-            ic.classList.remove('fa-eye-slash');
-            ic.classList.add('fa-eye');
+            inp.type = 'password'; ic.classList.remove('fa-eye-slash'); ic.classList.add('fa-eye');
         }
     });
 
     $('logoutBtn').addEventListener('click', function() {
-        localStorage.removeItem('reportAdmin');
-        currentAdmin = null;
-        showLogin();
+        auth.signOut();
     });
 
     var tabs = document.querySelectorAll('.tab');
@@ -101,11 +109,9 @@ function initEvents() {
             for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
             this.classList.add('active');
             if (this.dataset.type === 'single') {
-                $('singleForm').classList.remove('hidden');
-                $('multipleForm').classList.add('hidden');
+                $('singleForm').classList.remove('hidden'); $('multipleForm').classList.add('hidden');
             } else {
-                $('singleForm').classList.add('hidden');
-                $('multipleForm').classList.remove('hidden');
+                $('singleForm').classList.add('hidden'); $('multipleForm').classList.remove('hidden');
             }
         });
     }
@@ -115,60 +121,56 @@ function initEvents() {
     $('singleSubmit').addEventListener('click', handleSingleSubmit);
     $('parseBtn').addEventListener('click', handleParse);
     $('multipleSubmit').addEventListener('click', handleMultipleSubmit);
-
     $('searchInput').addEventListener('input', handleSearch);
     $('searchClear').addEventListener('click', function() {
-        $('searchInput').value = '';
-        $('searchClear').classList.add('hidden');
-        $('searchSuggestions').classList.add('hidden');
-        renderReports();
+        $('searchInput').value = ''; $('searchClear').classList.add('hidden');
+        $('searchSuggestions').classList.add('hidden'); renderReports();
     });
-
     $('modalClose').addEventListener('click', closeModal);
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
-
     document.addEventListener('click', function(e) {
-        if (!e.target.closest('.search-container')) {
-            $('searchSuggestions').classList.add('hidden');
-        }
+        if (!e.target.closest('.search-container')) $('searchSuggestions').classList.add('hidden');
     });
 }
 
 function setDefaultDate() {
     var today = new Date();
-    var y = today.getFullYear();
-    var m = String(today.getMonth() + 1).padStart(2, '0');
-    var d = String(today.getDate()).padStart(2, '0');
-    $('multipleDate').value = y + '-' + m + '-' + d;
+    $('multipleDate').value = today.getFullYear() + '-' +
+        String(today.getMonth() + 1).padStart(2, '0') + '-' +
+        String(today.getDate()).padStart(2, '0');
 }
 
+/* ===== LOGIN (Firebase Auth) ===== */
 function handleLogin(e) {
     e.preventDefault();
-    var u = $('loginUser').value.trim();
-    var p = $('loginPass').value;
-    if (ADMINS[u] && ADMINS[u].password === p) {
-        currentAdmin = { userId: u, name: ADMINS[u].name };
-        localStorage.setItem('reportAdmin', JSON.stringify(currentAdmin));
-        $('loginError').textContent = '';
-        showApp();
-    } else {
-        $('loginError').textContent = 'Invalid User ID or Password';
-        $('loginUser').value = '';
-        $('loginPass').value = '';
-    }
+    var email = $('loginEmail').value.trim();
+    var pass = $('loginPass').value;
+    $('loginError').textContent = '';
+
+    auth.signInWithEmailAndPassword(email, pass)
+        .then(function() {
+            $('loginEmail').value = ''; $('loginPass').value = '';
+        })
+        .catch(function(err) {
+            var msg = 'Login failed';
+            if (err.code === 'auth/user-not-found') msg = 'Admin not found';
+            else if (err.code === 'auth/wrong-password') msg = 'Wrong password';
+            else if (err.code === 'auth/invalid-email') msg = 'Invalid email';
+            else if (err.code === 'auth/invalid-credential') msg = 'Invalid credentials';
+            $('loginError').textContent = msg;
+        });
 }
 
+/* ===== FILE HANDLING ===== */
 function handleFileSelect(e, type) {
     var files = Array.from(e.target.files);
     files.forEach(function(file) {
-        if (file.size > 5 * 1024 * 1024) {
-            showToast('Max 5MB per file', 'error');
-            return;
-        }
+        if (file.size > 5 * 1024 * 1024) { showToast('Max 5MB per file', 'error'); return; }
         var reader = new FileReader();
         reader.onload = function(ev) {
-            if (type === 'single') singleFiles.push(ev.target.result);
-            else multipleFiles.push(ev.target.result);
+            var obj = { dataUrl: ev.target.result, file: file };
+            if (type === 'single') singleFiles.push(obj);
+            else multipleFiles.push(obj);
             renderPreviews(type);
         };
         reader.readAsDataURL(file);
@@ -181,7 +183,7 @@ function renderPreviews(type) {
     var html = '';
     for (var i = 0; i < f.length; i++) {
         html += '<div class="file-preview-item">';
-        html += '<img src="' + f[i] + '">';
+        html += '<img src="' + f[i].dataUrl + '">';
         html += '<button class="remove-file" onclick="removeFile(\'' + type + '\',' + i + ')"><i class="fas fa-times"></i></button>';
         html += '</div>';
     }
@@ -194,6 +196,22 @@ function removeFile(type, i) {
     renderPreviews(type);
 }
 
+/* ===== UPLOAD TO FIREBASE STORAGE ===== */
+function uploadFiles(fileObjects) {
+    if (!fileObjects || fileObjects.length === 0) {
+        return Promise.resolve([]);
+    }
+    var promises = fileObjects.map(function(fileObj, idx) {
+        var fileName = Date.now() + '_' + idx + '_' + Math.random().toString(36).substr(2, 9);
+        var ref = storage.ref('screenshots/' + fileName);
+        return ref.put(fileObj.file).then(function(snapshot) {
+            return snapshot.ref.getDownloadURL();
+        });
+    });
+    return Promise.all(promises);
+}
+
+/* ===== SINGLE REPORT SUBMIT ===== */
 function handleSingleSubmit() {
     var name = $('singleName').value.trim();
     var reason = $('singleReason').value;
@@ -201,13 +219,24 @@ function handleSingleSubmit() {
     if (!name) { showToast('Enter member name', 'error'); return; }
     if (!reason) { showToast('Select report reason', 'error'); return; }
     showLoading();
-    db.ref('reports').push({
-        name: name, reason: reason, description: desc || '',
-        screenshots: singleFiles.length > 0 ? singleFiles : [],
-        linkNumber: '', gapDetails: '',
-        admin: currentAdmin.name, adminId: currentAdmin.userId,
-        timestamp: Date.now(), reportDate: '',
-        dismissed: false, dismissedBy: '', dismissedAt: 0
+
+    uploadFiles(singleFiles).then(function(urls) {
+        return db.collection('reports').add({
+            name: name,
+            reason: reason,
+            description: desc || '',
+            screenshots: urls,
+            linkNumber: '',
+            gapDetails: '',
+            admin: currentAdmin.name,
+            adminUid: currentAdmin.uid,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            createdAt: Date.now(),
+            reportDate: '',
+            dismissed: false,
+            dismissedBy: '',
+            dismissedAt: null
+        });
     }).then(function() {
         hideLoading();
         showToast('Report submitted!', 'success');
@@ -220,6 +249,7 @@ function handleSingleSubmit() {
     });
 }
 
+/* ===== PARSE FUNCTIONS ===== */
 function handleParse() {
     var text = $('multipleList').value.trim();
     var reason = $('multipleReason').value;
@@ -232,11 +262,9 @@ function handleParse() {
     if (parsed.length === 0) { showToast('Could not parse names', 'error'); return; }
     var html = '';
     for (var i = 0; i < parsed.length; i++) {
-        html += '<div class="parsed-item">';
-        html += '<div class="parsed-number">' + (i + 1) + '</div>';
+        html += '<div class="parsed-item"><div class="parsed-number">' + (i + 1) + '</div>';
         html += '<div class="parsed-name">' + esc(parsed[i].name) + '</div>';
-        html += '<div class="parsed-extra">' + esc(parsed[i].extra || '') + '</div>';
-        html += '</div>';
+        html += '<div class="parsed-extra">' + esc(parsed[i].extra || '') + '</div></div>';
     }
     $('parsedList').innerHTML = html;
     $('parsePreview').classList.remove('hidden');
@@ -245,44 +273,28 @@ function handleParse() {
 }
 
 function parseLateAllDone(text) {
-    var results = [];
-    var lines = text.split('\n');
+    var results = []; var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
         var atMatch = line.match(/@([^@\n]+)/);
         var pinMatch = line.match(/📌\s*\/?\s*(\d+)/);
         if (atMatch && pinMatch) {
-            var name = atMatch[1].trim();
-            name = name.replace(/^[\d️⃣\s\.\)\-]+/, '').trim();
-            name = name.replace(/\s*📌.*$/, '').trim();
-            if (name.length > 0) {
-                results.push({
-                    name: name,
-                    extra: '📌/' + pinMatch[1],
-                    linkNumber: '📌/' + pinMatch[1]
-                });
-            }
+            var name = atMatch[1].trim().replace(/^[\d️⃣\s\.\)\-]+/, '').trim().replace(/\s*📌.*$/, '').trim();
+            if (name.length > 0) results.push({ name: name, extra: '📌/' + pinMatch[1], linkNumber: '📌/' + pinMatch[1] });
         }
     }
     return results;
 }
 
 function parseSupportGap(text) {
-    var results = [];
-    var lines = text.split('\n');
+    var results = []; var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var atIdx = line.indexOf('@');
+        var line = lines[i]; var atIdx = line.indexOf('@');
         if (atIdx === -1) continue;
-        var gapWord = 'সাপোর্ট গ্যাপ';
-        var gapIdx = line.indexOf(gapWord, atIdx);
-        if (gapIdx === -1) {
-            gapWord = 'গ্যাপ';
-            gapIdx = line.indexOf(gapWord, atIdx);
-        }
+        var gapIdx = line.indexOf('সাপোর্ট গ্যাপ', atIdx);
+        if (gapIdx === -1) gapIdx = line.indexOf('গ্যাপ', atIdx);
         if (gapIdx === -1) continue;
-        var name = line.substring(atIdx + 1, gapIdx).trim();
-        name = name.replace(/^[\d️⃣\s\.\)\-]+/, '').trim();
+        var name = line.substring(atIdx + 1, gapIdx).trim().replace(/^[\d️⃣\s\.\)\-]+/, '').trim();
         var rest = line.substring(gapIdx);
         var numMatch = rest.match(/(\d+)\s*পোস্ট/);
         var bracketMatch = rest.match(/\(([^)]+)\)/);
@@ -291,30 +303,25 @@ function parseSupportGap(text) {
         if (name.length > 0) {
             var gapDetail = 'সাপোর্ট গ্যাপ ' + gapCount + ' পোস্ট';
             if (postNums) gapDetail += ' (' + postNums + ')';
-            results.push({
-                name: name,
-                extra: 'গ্যাপ ' + gapCount + (postNums ? ' (' + postNums + ')' : ''),
-                gapDetails: gapDetail
-            });
+            results.push({ name: name, extra: 'গ্যাপ ' + gapCount + (postNums ? ' (' + postNums + ')' : ''), gapDetails: gapDetail });
         }
     }
     return results;
 }
 
 function parseGeneric(text) {
-    var results = [];
-    var lines = text.split('\n');
+    var results = []; var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
         var match = lines[i].match(/@([^@\n]+)/);
         if (match) {
-            var name = match[1].trim();
-            name = name.replace(/^[\d️⃣\s\.\)\-]+/, '').trim();
+            var name = match[1].trim().replace(/^[\d️⃣\s\.\)\-]+/, '').trim();
             if (name.length > 1) results.push({ name: name, extra: '' });
         }
     }
     return results;
 }
 
+/* ===== MULTIPLE REPORT SUBMIT ===== */
 function handleMultipleSubmit() {
     var reason = $('multipleReason').value;
     var desc = $('multipleDesc').value.trim();
@@ -326,21 +333,25 @@ function handleMultipleSubmit() {
     try { parsed = JSON.parse(pd); } catch(e) { showToast('Parse error', 'error'); return; }
     if (parsed.length === 0) { showToast('No members', 'error'); return; }
     showLoading();
-    var updates = {};
-    var ts = Date.now();
-    for (var i = 0; i < parsed.length; i++) {
-        var key = db.ref('reports').push().key;
-        updates['reports/' + key] = {
-            name: parsed[i].name, reason: reason, description: desc || '',
-            screenshots: multipleFiles.length > 0 ? multipleFiles : [],
-            linkNumber: parsed[i].linkNumber || '',
-            gapDetails: parsed[i].gapDetails || parsed[i].extra || '',
-            admin: currentAdmin.name, adminId: currentAdmin.userId,
-            timestamp: ts + i, reportDate: dateVal || '',
-            dismissed: false, dismissedBy: '', dismissedAt: 0
-        };
-    }
-    db.ref().update(updates).then(function() {
+
+    uploadFiles(multipleFiles).then(function(urls) {
+        var batch = db.batch();
+        var ts = Date.now();
+        for (var i = 0; i < parsed.length; i++) {
+            var docRef = db.collection('reports').doc();
+            batch.set(docRef, {
+                name: parsed[i].name, reason: reason, description: desc || '',
+                screenshots: urls,
+                linkNumber: parsed[i].linkNumber || '',
+                gapDetails: parsed[i].gapDetails || parsed[i].extra || '',
+                admin: currentAdmin.name, adminUid: currentAdmin.uid,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: ts + i, reportDate: dateVal || '',
+                dismissed: false, dismissedBy: '', dismissedAt: null
+            });
+        }
+        return batch.commit();
+    }).then(function() {
         hideLoading();
         showToast(parsed.length + ' reports submitted!', 'success');
         $('multipleList').value = ''; $('multipleReason').value = '';
@@ -354,32 +365,40 @@ function handleMultipleSubmit() {
     });
 }
 
+/* ===== LOAD REPORTS (Firestore Realtime) ===== */
 function loadReports() {
-    db.ref('reports').on('value', function(snap) {
-        allReports = snap.exists() ? snap.val() : {};
-        renderReports();
-        updateCounts();
-    });
+    if (unsubscribe) unsubscribe();
+    unsubscribe = db.collection('reports')
+        .orderBy('createdAt', 'desc')
+        .onSnapshot(function(snapshot) {
+            allReports = {};
+            snapshot.forEach(function(doc) {
+                allReports[doc.id] = doc.data();
+                allReports[doc.id]._key = doc.id;
+            });
+            renderReports();
+            updateCounts();
+        }, function(err) {
+            console.error('Firestore error:', err);
+            showToast('Error loading reports', 'error');
+        });
 }
 
+/* ===== RENDER REPORTS ===== */
 function renderReports(filter) {
     filter = filter || '';
-    var active = [];
-    var dismissed = [];
+    var active = []; var dismissed = [];
     var keys = Object.keys(allReports);
     for (var i = 0; i < keys.length; i++) {
-        var k = keys[i];
-        var r = allReports[k];
-        r._key = k;
+        var k = keys[i]; var r = allReports[k]; r._key = k;
         if (filter) {
             var s = ((r.name||'') + ' ' + (r.reason||'') + ' ' + (r.description||'') + ' ' + (r.admin||'')).toLowerCase();
             if (s.indexOf(filter.toLowerCase()) === -1) continue;
         }
-        if (r.dismissed) dismissed.push(r);
-        else active.push(r);
+        if (r.dismissed) dismissed.push(r); else active.push(r);
     }
-    active.sort(function(a, b) { return b.timestamp - a.timestamp; });
-    dismissed.sort(function(a, b) { return (b.dismissedAt || b.timestamp) - (a.dismissedAt || a.timestamp); });
+    active.sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    dismissed.sort(function(a, b) { return (b.dismissedAt || b.createdAt || 0) - (a.dismissedAt || a.createdAt || 0); });
     renderList($('reportsList'), active, false);
     renderList($('dismissedList'), dismissed, true);
 }
@@ -393,15 +412,13 @@ function renderList(container, reports, isDismissed) {
     }
     var html = '';
     for (var i = 0; i < reports.length; i++) {
-        var r = reports[i];
-        var rc = getReasonClass(r.reason);
-        var t = fmtTime(r.timestamp);
+        var r = reports[i]; var rc = getReasonClass(r.reason);
+        var t = fmtTime(r.createdAt);
         var hasImg = r.screenshots && r.screenshots.length > 0;
         html += '<div class="report-card ' + (isDismissed ? 'dismissed' : '') + '">';
         html += '<div class="report-card-header">';
         html += '<div class="report-name">' + esc(r.name) + '</div>';
-        html += '<span class="report-reason-badge ' + rc + '">' + esc(r.reason) + '</span>';
-        html += '</div>';
+        html += '<span class="report-reason-badge ' + rc + '">' + esc(r.reason) + '</span></div>';
         if (r.linkNumber) html += '<div class="report-link-numbers">Link: ' + esc(r.linkNumber) + '</div>';
         if (r.gapDetails) html += '<div class="report-link-numbers">' + esc(r.gapDetails) + '</div>';
         if (r.description) {
@@ -413,14 +430,10 @@ function renderList(container, reports, isDismissed) {
         html += '<div class="report-info-item"><i class="fas fa-user-shield"></i> ' + esc(r.admin) + '</div>';
         if (hasImg) html += '<div class="report-info-item"><i class="fas fa-image"></i> ' + r.screenshots.length + '</div>';
         if (isDismissed && r.dismissedBy) html += '<div class="report-info-item"><i class="fas fa-check"></i> ' + esc(r.dismissedBy) + '</div>';
-        html += '</div>';
-        html += '<div class="report-card-actions">';
+        html += '</div><div class="report-card-actions">';
         html += '<button class="btn-view" onclick="event.stopPropagation();viewReport(\'' + r._key + '\')"><i class="fas fa-eye"></i> View</button>';
-        if (!isDismissed) {
-            html += '<button class="btn-dismiss" onclick="event.stopPropagation();dismissReport(\'' + r._key + '\')"><i class="fas fa-check"></i> Dismiss</button>';
-        } else {
-            html += '<button class="btn-restore" onclick="event.stopPropagation();restoreReport(\'' + r._key + '\')"><i class="fas fa-undo"></i> Restore</button>';
-        }
+        if (!isDismissed) html += '<button class="btn-dismiss" onclick="event.stopPropagation();dismissReport(\'' + r._key + '\')"><i class="fas fa-check"></i> Dismiss</button>';
+        else html += '<button class="btn-restore" onclick="event.stopPropagation();restoreReport(\'' + r._key + '\')"><i class="fas fa-undo"></i> Restore</button>';
         html += '<button class="btn-delete" onclick="event.stopPropagation();deleteReport(\'' + r._key + '\')"><i class="fas fa-trash"></i></button>';
         html += '</div></div>';
     }
@@ -428,62 +441,47 @@ function renderList(container, reports, isDismissed) {
 }
 
 function updateCounts() {
-    var a = 0, d = 0;
-    var keys = Object.keys(allReports);
-    for (var i = 0; i < keys.length; i++) {
-        if (allReports[keys[i]].dismissed) d++; else a++;
-    }
-    $('reportCount').textContent = a;
-    $('dismissedCount').textContent = d;
+    var a = 0, d = 0; var keys = Object.keys(allReports);
+    for (var i = 0; i < keys.length; i++) { if (allReports[keys[i]].dismissed) d++; else a++; }
+    $('reportCount').textContent = a; $('dismissedCount').textContent = d;
 }
 
+/* ===== ACTIONS ===== */
 function dismissReport(k) {
-    db.ref('reports/' + k).update({
+    db.collection('reports').doc(k).update({
         dismissed: true, dismissedBy: currentAdmin.name, dismissedAt: Date.now()
     }).then(function() { showToast('Dismissed', 'success'); });
 }
 
 function restoreReport(k) {
-    db.ref('reports/' + k).update({
-        dismissed: false, dismissedBy: '', dismissedAt: 0
+    db.collection('reports').doc(k).update({
+        dismissed: false, dismissedBy: '', dismissedAt: null
     }).then(function() { showToast('Restored', 'info'); });
 }
 
 function deleteReport(k) {
     if (confirm('Permanently delete this report?')) {
-        db.ref('reports/' + k).remove().then(function() { showToast('Deleted', 'success'); });
+        db.collection('reports').doc(k).delete().then(function() { showToast('Deleted', 'success'); });
     }
 }
 
+/* ===== VIEW REPORT MODAL ===== */
 function viewReport(k) {
-    var r = allReports[k];
-    if (!r) return;
+    var r = allReports[k]; if (!r) return;
     var rc = getReasonClass(r.reason);
     var h = '';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Member Name</div>';
     h += '<div class="modal-detail-value" style="font-size:17px;font-weight:700">' + esc(r.name) + '</div></div>';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Reason</div>';
     h += '<div class="modal-detail-value"><span class="report-reason-badge ' + rc + '" style="font-size:12px;padding:5px 12px">' + esc(r.reason) + '</span></div></div>';
-    if (r.linkNumber) {
-        h += '<div class="modal-detail-row"><div class="modal-detail-label">Link Number</div>';
-        h += '<div class="modal-detail-value" style="color:var(--accent);font-weight:600">' + esc(r.linkNumber) + '</div></div>';
-    }
-    if (r.gapDetails) {
-        h += '<div class="modal-detail-row"><div class="modal-detail-label">Gap Details</div>';
-        h += '<div class="modal-detail-value" style="color:var(--danger);font-weight:600">' + esc(r.gapDetails) + '</div></div>';
-    }
-    if (r.description) {
-        h += '<div class="modal-detail-row"><div class="modal-detail-label">Description</div>';
-        h += '<div class="modal-detail-value">' + esc(r.description) + '</div></div>';
-    }
-    if (r.reportDate) {
-        h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Date</div>';
-        h += '<div class="modal-detail-value">' + esc(r.reportDate) + '</div></div>';
-    }
+    if (r.linkNumber) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Link Number</div>'; h += '<div class="modal-detail-value" style="color:var(--accent);font-weight:600">' + esc(r.linkNumber) + '</div></div>'; }
+    if (r.gapDetails) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Gap Details</div>'; h += '<div class="modal-detail-value" style="color:var(--danger);font-weight:600">' + esc(r.gapDetails) + '</div></div>'; }
+    if (r.description) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Description</div>'; h += '<div class="modal-detail-value">' + esc(r.description) + '</div></div>'; }
+    if (r.reportDate) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Date</div>'; h += '<div class="modal-detail-value">' + esc(r.reportDate) + '</div></div>'; }
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Reported By</div>';
     h += '<div class="modal-detail-value"><i class="fas fa-user-shield" style="color:var(--accent);margin-right:6px"></i>' + esc(r.admin) + '</div></div>';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Submitted At</div>';
-    h += '<div class="modal-detail-value">' + fmtTime(r.timestamp) + '</div></div>';
+    h += '<div class="modal-detail-value">' + fmtTime(r.createdAt) + '</div></div>';
     if (r.dismissed) {
         h += '<div class="modal-detail-row"><div class="modal-detail-label">Status</div>';
         h += '<div class="modal-detail-value" style="color:var(--success)"><i class="fas fa-check-circle"></i> Dismissed by ' + esc(r.dismissedBy || 'Unknown');
@@ -498,36 +496,28 @@ function viewReport(k) {
         }
         h += '</div></div>';
     }
-    $('modalBody').innerHTML = h;
-    $('reportModal').classList.remove('hidden');
+    $('modalBody').innerHTML = h; $('reportModal').classList.remove('hidden');
 }
 
 function closeModal() { $('reportModal').classList.add('hidden'); }
 
 function openImg(src) {
-    var v = document.createElement('div');
-    v.className = 'image-viewer';
-    var img = document.createElement('img');
-    img.src = src;
-    v.appendChild(img);
+    var v = document.createElement('div'); v.className = 'image-viewer';
+    var img = document.createElement('img'); img.src = src; v.appendChild(img);
     v.addEventListener('click', function() { v.remove(); });
     document.body.appendChild(v);
 }
 
+/* ===== SEARCH ===== */
 function handleSearch() {
     var q = $('searchInput').value.trim();
     if (q.length > 0) $('searchClear').classList.remove('hidden');
-    else {
-        $('searchClear').classList.add('hidden');
-        $('searchSuggestions').classList.add('hidden');
-        renderReports(); return;
-    }
-    var sg = [];
-    var keys = Object.keys(allReports);
+    else { $('searchClear').classList.add('hidden'); $('searchSuggestions').classList.add('hidden'); renderReports(); return; }
+    var sg = []; var keys = Object.keys(allReports);
     for (var i = 0; i < keys.length; i++) {
         var r = allReports[keys[i]];
-        var s = ((r.name||'') + ' ' + (r.reason||'')).toLowerCase();
-        if (s.indexOf(q.toLowerCase()) !== -1) sg.push({ k: keys[i], r: r });
+        if (((r.name||'') + ' ' + (r.reason||'')).toLowerCase().indexOf(q.toLowerCase()) !== -1)
+            sg.push({ k: keys[i], r: r });
     }
     var html = '';
     if (sg.length > 0) {
@@ -536,18 +526,18 @@ function handleSearch() {
             html += '<div class="search-suggestion-item" onclick="selectSug(\'' + sg[i].k + '\')">';
             html += '<div class="suggestion-icon"><i class="fas fa-user"></i></div><div>';
             html += '<div class="suggestion-name">' + esc(sg[i].r.name) + '</div>';
-            html += '<div class="suggestion-reason">' + esc(sg[i].r.reason) + ' - ' + fmtTime(sg[i].r.timestamp) + '</div></div></div>';
+            html += '<div class="suggestion-reason">' + esc(sg[i].r.reason) + ' - ' + fmtTime(sg[i].r.createdAt) + '</div></div></div>';
         }
     } else {
         html = '<div class="search-suggestion-item"><div class="suggestion-icon"><i class="fas fa-search"></i></div><div><div class="suggestion-name" style="color:var(--text-muted)">No results</div></div></div>';
     }
-    $('searchSuggestions').innerHTML = html;
-    $('searchSuggestions').classList.remove('hidden');
+    $('searchSuggestions').innerHTML = html; $('searchSuggestions').classList.remove('hidden');
     renderReports(q);
 }
 
 function selectSug(k) { $('searchSuggestions').classList.add('hidden'); viewReport(k); }
 
+/* ===== HELPERS ===== */
 function getReasonClass(r) {
     if (!r) return 'reason-others';
     if (r.indexOf('Late') !== -1) return 'reason-late';
@@ -573,24 +563,18 @@ function fmtTime(ts) {
 
 function esc(t) {
     if (!t) return '';
-    var d = document.createElement('div');
-    d.textContent = t;
-    return d.innerHTML;
+    var d = document.createElement('div'); d.textContent = t; return d.innerHTML;
 }
 
 function showToast(msg, type) {
-    var c = $('toastContainer');
-    var t = document.createElement('div');
+    var c = $('toastContainer'); var t = document.createElement('div');
     t.className = 'toast ' + (type || 'info');
     var ic = 'fa-info-circle';
     if (type === 'success') ic = 'fa-check-circle';
     if (type === 'error') ic = 'fa-exclamation-circle';
     t.innerHTML = '<i class="fas ' + ic + '"></i><span>' + msg + '</span>';
     c.appendChild(t);
-    setTimeout(function() {
-        t.style.animation = 'toastOut 0.4s ease forwards';
-        setTimeout(function() { t.remove(); }, 400);
-    }, 3000);
+    setTimeout(function() { t.style.animation = 'toastOut 0.4s ease forwards'; setTimeout(function() { t.remove(); }, 400); }, 3000);
 }
 
 function showLoading() { $('loadingOverlay').classList.remove('hidden'); }
