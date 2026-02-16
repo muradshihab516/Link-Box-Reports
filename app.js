@@ -1,34 +1,33 @@
-/* ===== FIREBASE CONFIG ===== */
-var firebaseConfig = {
-    apiKey: "AIzaSyDuzmtCpChGwOsVuRReNq1JwXkSc9LyHg0",
-    authDomain: "support-link-box-reports.firebaseapp.com",
-    databaseURL: "https://support-link-box-reports-default-rtdb.firebaseio.com",
-    projectId: "support-link-box-reports",
-    storageBucket: "support-link-box-reports.firebasestorage.app",
-    messagingSenderId: "181357185091",
-    appId: "1:181357185091:web:9b1609aec9efdab254ecf6"
-};
+/* ===== CONFIGURATION ===== */
+// আপনার Supabase ড্যাশবোর্ড থেকে নিন
+const SUPABASE_URL = "https://xzgozwylnfpcicdipjhw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_mjndYPAxtmjjulEtV3brkA_CPhU4BA_";
 
-firebase.initializeApp(firebaseConfig);
-var auth = firebase.auth();
-var db = firebase.firestore();
-var storage = firebase.storage();
+// আপনার Cloudinary ড্যাশবোর্ড থেকে নিন
+const CLOUDINARY_CLOUD_NAME = "dm0f7l6qa"; 
+const CLOUDINARY_PRESET = "Reports"; // অবশ্যই Unsigned হতে হবে
 
-/* ===== ADMIN DISPLAY NAMES (email → name mapping) ===== */
+// Initialize Supabase
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ===== ADMIN LIST ===== */
 var ADMIN_NAMES = {
     'shihab@linkbox.com': 'Md Shihab Khan',
     'mamun@linkbox.com': 'Mamun Aravi',
     'shuvo@linkbox.com': 'Shuvo Sutradhar',
     'shadat@linkbox.com': 'ShaDat Hossain',
     'rubel@linkbox.com': 'Ariyan Ahmed Rubel',
-    'mustakim@linkbox.com': 'MD Mustakim Islam'
+    'mustakim@linkbox.com': 'MD Mustakim Islam', // এখানে কমা যোগ করা হয়েছে
+    'Hanif@linkbox.com': 'Mohammad Abu Hanif'
+};
+    // টেস্ট করার জন্য আপনার নিজের ইমেইল এখানে যোগ করতে পারেন
 };
 
 var currentAdmin = null;
 var allReports = {};
 var singleFiles = [];
 var multipleFiles = [];
-var unsubscribe = null;
+var realtimeChannel = null;
 
 function $(id) { return document.getElementById(id); }
 
@@ -40,21 +39,37 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /* ===== AUTH STATE LISTENER ===== */
-function initAuthListener() {
-    auth.onAuthStateChanged(function(user) {
-        if (user) {
+async function initAuthListener() {
+    // Check current session
+    const { data: { session } } = await supabase.auth.getSession();
+    handleUserSession(session);
+
+    // Listen for changes
+    supabase.auth.onAuthStateChange((_event, session) => {
+        handleUserSession(session);
+    });
+}
+
+function handleUserSession(session) {
+    if (session && session.user) {
+        const email = session.user.email;
+        if (ADMIN_NAMES.hasOwnProperty(email)) {
             currentAdmin = {
-                uid: user.uid,
-                email: user.email,
-                name: ADMIN_NAMES[user.email] || user.email.split('@')[0]
+                uid: session.user.id,
+                email: email,
+                name: ADMIN_NAMES[email]
             };
             showApp();
         } else {
-            currentAdmin = null;
-            if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+            alert('Access Denied: You are not an authorized admin.');
+            supabase.auth.signOut();
             showLogin();
         }
-    });
+    } else {
+        currentAdmin = null;
+        if (realtimeChannel) { supabase.removeChannel(realtimeChannel); realtimeChannel = null; }
+        showLogin();
+    }
 }
 
 function showLogin() {
@@ -72,7 +87,7 @@ function showApp() {
 /* ===== EVENT LISTENERS ===== */
 function initEvents() {
     $('loginForm').addEventListener('submit', handleLogin);
-
+    
     $('togglePass').addEventListener('click', function() {
         var inp = $('loginPass');
         var ic = $('togglePass');
@@ -84,9 +99,10 @@ function initEvents() {
     });
 
     $('logoutBtn').addEventListener('click', function() {
-        auth.signOut();
+        supabase.auth.signOut();
     });
 
+    // Tabs & Type Buttons (Same as before)
     var tabs = document.querySelectorAll('.tab');
     for (var i = 0; i < tabs.length; i++) {
         tabs[i].addEventListener('click', function() {
@@ -127,7 +143,9 @@ function initEvents() {
         $('searchSuggestions').classList.add('hidden'); renderReports();
     });
     $('modalClose').addEventListener('click', closeModal);
-    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    var overlay = document.querySelector('.modal-overlay');
+    if(overlay) overlay.addEventListener('click', closeModal);
+
     document.addEventListener('click', function(e) {
         if (!e.target.closest('.search-container')) $('searchSuggestions').classList.add('hidden');
     });
@@ -140,25 +158,23 @@ function setDefaultDate() {
         String(today.getDate()).padStart(2, '0');
 }
 
-/* ===== LOGIN (Firebase Auth) ===== */
-function handleLogin(e) {
+/* ===== LOGIN (Supabase Auth) ===== */
+async function handleLogin(e) {
     e.preventDefault();
     var email = $('loginEmail').value.trim();
     var pass = $('loginPass').value;
     $('loginError').textContent = '';
 
-    auth.signInWithEmailAndPassword(email, pass)
-        .then(function() {
-            $('loginEmail').value = ''; $('loginPass').value = '';
-        })
-        .catch(function(err) {
-            var msg = 'Login failed';
-            if (err.code === 'auth/user-not-found') msg = 'Admin not found';
-            else if (err.code === 'auth/wrong-password') msg = 'Wrong password';
-            else if (err.code === 'auth/invalid-email') msg = 'Invalid email';
-            else if (err.code === 'auth/invalid-credential') msg = 'Invalid credentials';
-            $('loginError').textContent = msg;
-        });
+    const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: pass,
+    });
+
+    if (error) {
+        $('loginError').textContent = error.message;
+    } else {
+        $('loginEmail').value = ''; $('loginPass').value = '';
+    }
 }
 
 /* ===== FILE HANDLING ===== */
@@ -196,48 +212,61 @@ function removeFile(type, i) {
     renderPreviews(type);
 }
 
-/* ===== UPLOAD TO FIREBASE STORAGE ===== */
-function uploadFiles(fileObjects) {
+/* ===== UPLOAD TO CLOUDINARY ===== */
+async function uploadFiles(fileObjects) {
     if (!fileObjects || fileObjects.length === 0) {
         return Promise.resolve([]);
     }
-    var promises = fileObjects.map(function(fileObj, idx) {
-        var fileName = Date.now() + '_' + idx + '_' + Math.random().toString(36).substr(2, 9);
-        var ref = storage.ref('screenshots/' + fileName);
-        return ref.put(fileObj.file).then(function(snapshot) {
-            return snapshot.ref.getDownloadURL();
-        });
+
+    const promises = fileObjects.map(async (fileObj) => {
+        const formData = new FormData();
+        formData.append('file', fileObj.file);
+        formData.append('upload_preset', CLOUDINARY_PRESET);
+        formData.append('cloud_name', CLOUDINARY_CLOUD_NAME);
+
+        try {
+            const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            return data.secure_url;
+        } catch (err) {
+            console.error("Upload failed", err);
+            throw new Error("Image upload failed");
+        }
     });
+
     return Promise.all(promises);
 }
 
-/* ===== SINGLE REPORT SUBMIT ===== */
+/* ===== SINGLE REPORT SUBMIT (Supabase) ===== */
 function handleSingleSubmit() {
     var name = $('singleName').value.trim();
     var reason = $('singleReason').value;
     var desc = $('singleDesc').value.trim();
+    
     if (!name) { showToast('Enter member name', 'error'); return; }
     if (!reason) { showToast('Select report reason', 'error'); return; }
     showLoading();
 
-    uploadFiles(singleFiles).then(function(urls) {
-        return db.collection('reports').add({
+    uploadFiles(singleFiles).then(async function(urls) {
+        const { error } = await supabase.from('reports').insert({
             name: name,
             reason: reason,
             description: desc || '',
-            screenshots: urls,
-            linkNumber: '',
-            gapDetails: '',
-            admin: currentAdmin.name,
-            adminUid: currentAdmin.uid,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-            createdAt: Date.now(),
-            reportDate: '',
-            dismissed: false,
-            dismissedBy: '',
-            dismissedAt: null
+            screenshots: urls, // Supabase stores array directly
+            link_number: '',
+            gap_details: '',
+            admin_name: currentAdmin.name,
+            admin_email: currentAdmin.email,
+            created_at: new Date().toISOString(),
+            report_date: '',
+            dismissed: false
         });
-    }).then(function() {
+
+        if (error) throw error;
+
         hideLoading();
         showToast('Report submitted!', 'success');
         $('singleName').value = ''; $('singleReason').value = '';
@@ -249,7 +278,7 @@ function handleSingleSubmit() {
     });
 }
 
-/* ===== PARSE FUNCTIONS ===== */
+/* ===== PARSE FUNCTIONS (Same as before) ===== */
 function handleParse() {
     var text = $('multipleList').value.trim();
     var reason = $('multipleReason').value;
@@ -272,6 +301,7 @@ function handleParse() {
     showToast(parsed.length + ' member(s) parsed', 'info');
 }
 
+// ... (parseLateAllDone, parseSupportGap, parseGeneric ফাংশনগুলো আগের মতোই থাকবে, কোনো পরিবর্তন নেই) ...
 function parseLateAllDone(text) {
     var results = []; var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
@@ -320,8 +350,10 @@ function parseGeneric(text) {
     }
     return results;
 }
+// ... (Parsing functions end) ...
 
-/* ===== MULTIPLE REPORT SUBMIT ===== */
+
+/* ===== MULTIPLE REPORT SUBMIT (Supabase Batch) ===== */
 function handleMultipleSubmit() {
     var reason = $('multipleReason').value;
     var desc = $('multipleDesc').value.trim();
@@ -334,24 +366,25 @@ function handleMultipleSubmit() {
     if (parsed.length === 0) { showToast('No members', 'error'); return; }
     showLoading();
 
-    uploadFiles(multipleFiles).then(function(urls) {
-        var batch = db.batch();
-        var ts = Date.now();
-        for (var i = 0; i < parsed.length; i++) {
-            var docRef = db.collection('reports').doc();
-            batch.set(docRef, {
-                name: parsed[i].name, reason: reason, description: desc || '',
-                screenshots: urls,
-                linkNumber: parsed[i].linkNumber || '',
-                gapDetails: parsed[i].gapDetails || parsed[i].extra || '',
-                admin: currentAdmin.name, adminUid: currentAdmin.uid,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                createdAt: ts + i, reportDate: dateVal || '',
-                dismissed: false, dismissedBy: '', dismissedAt: null
-            });
-        }
-        return batch.commit();
-    }).then(function() {
+    uploadFiles(multipleFiles).then(async function(urls) {
+        // Prepare array for bulk insert
+        const rows = parsed.map(p => ({
+            name: p.name,
+            reason: reason,
+            description: desc || '',
+            screenshots: urls,
+            link_number: p.linkNumber || '',
+            gap_details: p.gapDetails || p.extra || '',
+            admin_name: currentAdmin.name,
+            admin_email: currentAdmin.email,
+            created_at: new Date().toISOString(),
+            report_date: dateVal || '',
+            dismissed: false
+        }));
+
+        const { error } = await supabase.from('reports').insert(rows);
+        if (error) throw error;
+
         hideLoading();
         showToast(parsed.length + ' reports submitted!', 'success');
         $('multipleList').value = ''; $('multipleReason').value = '';
@@ -365,23 +398,42 @@ function handleMultipleSubmit() {
     });
 }
 
-/* ===== LOAD REPORTS (Firestore Realtime) ===== */
+/* ===== LOAD REPORTS (Supabase Realtime) ===== */
 function loadReports() {
-    if (unsubscribe) unsubscribe();
-    unsubscribe = db.collection('reports')
-        .orderBy('createdAt', 'desc')
-        .onSnapshot(function(snapshot) {
-            allReports = {};
-            snapshot.forEach(function(doc) {
-                allReports[doc.id] = doc.data();
-                allReports[doc.id]._key = doc.id;
-            });
-            renderReports();
-            updateCounts();
-        }, function(err) {
-            console.error('Firestore error:', err);
-            showToast('Error loading reports', 'error');
-        });
+    fetchInitialData();
+
+    // Subscribe to changes
+    if (realtimeChannel) supabase.removeChannel(realtimeChannel);
+    
+    realtimeChannel = supabase
+        .channel('public:reports')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, (payload) => {
+            // Reload data on any change (Insert/Update/Delete)
+            fetchInitialData();
+        })
+        .subscribe();
+}
+
+async function fetchInitialData() {
+    // Load last 50 reports
+    const { data, error } = await supabase
+        .from('reports')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+    if (error) {
+        showToast('Error loading reports', 'error');
+        console.error(error);
+        return;
+    }
+
+    allReports = {};
+    data.forEach(row => {
+        allReports[row.id] = row;
+    });
+    renderReports();
+    updateCounts();
 }
 
 /* ===== RENDER REPORTS ===== */
@@ -389,16 +441,20 @@ function renderReports(filter) {
     filter = filter || '';
     var active = []; var dismissed = [];
     var keys = Object.keys(allReports);
+    
     for (var i = 0; i < keys.length; i++) {
-        var k = keys[i]; var r = allReports[k]; r._key = k;
+        var k = keys[i]; var r = allReports[k];
         if (filter) {
-            var s = ((r.name||'') + ' ' + (r.reason||'') + ' ' + (r.description||'') + ' ' + (r.admin||'')).toLowerCase();
+            var s = ((r.name||'') + ' ' + (r.reason||'') + ' ' + (r.description||'') + ' ' + (r.admin_name||'')).toLowerCase();
             if (s.indexOf(filter.toLowerCase()) === -1) continue;
         }
         if (r.dismissed) dismissed.push(r); else active.push(r);
     }
-    active.sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
-    dismissed.sort(function(a, b) { return (b.dismissedAt || b.createdAt || 0) - (a.dismissedAt || a.createdAt || 0); });
+    
+    // Sorting happens in SQL fetch mostly, but good to keep JS sort for filtered view
+    active.sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    dismissed.sort(function(a, b) { return new Date(b.dismissed_at || b.created_at) - new Date(a.dismissed_at || a.created_at); });
+    
     renderList($('reportsList'), active, false);
     renderList($('dismissedList'), dismissed, true);
 }
@@ -413,28 +469,30 @@ function renderList(container, reports, isDismissed) {
     var html = '';
     for (var i = 0; i < reports.length; i++) {
         var r = reports[i]; var rc = getReasonClass(r.reason);
-        var t = fmtTime(r.createdAt);
+        var t = fmtTime(r.created_at);
         var hasImg = r.screenshots && r.screenshots.length > 0;
+        
+        // Note: r.id is numeric in Supabase, handle carefully in onclick
         html += '<div class="report-card ' + (isDismissed ? 'dismissed' : '') + '">';
         html += '<div class="report-card-header">';
         html += '<div class="report-name">' + esc(r.name) + '</div>';
         html += '<span class="report-reason-badge ' + rc + '">' + esc(r.reason) + '</span></div>';
-        if (r.linkNumber) html += '<div class="report-link-numbers">Link: ' + esc(r.linkNumber) + '</div>';
-        if (r.gapDetails) html += '<div class="report-link-numbers">' + esc(r.gapDetails) + '</div>';
+        if (r.link_number) html += '<div class="report-link-numbers">Link: ' + esc(r.link_number) + '</div>';
+        if (r.gap_details) html += '<div class="report-link-numbers">' + esc(r.gap_details) + '</div>';
         if (r.description) {
             var ds = r.description.length > 80 ? r.description.substring(0, 80) + '...' : r.description;
             html += '<div class="report-desc-preview">' + esc(ds) + '</div>';
         }
         html += '<div class="report-card-info">';
         html += '<div class="report-info-item"><i class="fas fa-clock"></i> ' + t + '</div>';
-        html += '<div class="report-info-item"><i class="fas fa-user-shield"></i> ' + esc(r.admin) + '</div>';
+        html += '<div class="report-info-item"><i class="fas fa-user-shield"></i> ' + esc(r.admin_name) + '</div>';
         if (hasImg) html += '<div class="report-info-item"><i class="fas fa-image"></i> ' + r.screenshots.length + '</div>';
-        if (isDismissed && r.dismissedBy) html += '<div class="report-info-item"><i class="fas fa-check"></i> ' + esc(r.dismissedBy) + '</div>';
+        if (isDismissed && r.dismissed_by) html += '<div class="report-info-item"><i class="fas fa-check"></i> ' + esc(r.dismissed_by) + '</div>';
         html += '</div><div class="report-card-actions">';
-        html += '<button class="btn-view" onclick="event.stopPropagation();viewReport(\'' + r._key + '\')"><i class="fas fa-eye"></i> View</button>';
-        if (!isDismissed) html += '<button class="btn-dismiss" onclick="event.stopPropagation();dismissReport(\'' + r._key + '\')"><i class="fas fa-check"></i> Dismiss</button>';
-        else html += '<button class="btn-restore" onclick="event.stopPropagation();restoreReport(\'' + r._key + '\')"><i class="fas fa-undo"></i> Restore</button>';
-        html += '<button class="btn-delete" onclick="event.stopPropagation();deleteReport(\'' + r._key + '\')"><i class="fas fa-trash"></i></button>';
+        html += '<button class="btn-view" onclick="event.stopPropagation();viewReport(' + r.id + ')"><i class="fas fa-eye"></i> View</button>';
+        if (!isDismissed) html += '<button class="btn-dismiss" onclick="event.stopPropagation();dismissReport(' + r.id + ')"><i class="fas fa-check"></i> Dismiss</button>';
+        else html += '<button class="btn-restore" onclick="event.stopPropagation();restoreReport(' + r.id + ')"><i class="fas fa-undo"></i> Restore</button>';
+        html += '<button class="btn-delete" onclick="event.stopPropagation();deleteReport(' + r.id + ')"><i class="fas fa-trash"></i></button>';
         html += '</div></div>';
     }
     container.innerHTML = html;
@@ -446,46 +504,58 @@ function updateCounts() {
     $('reportCount').textContent = a; $('dismissedCount').textContent = d;
 }
 
-/* ===== ACTIONS ===== */
-function dismissReport(k) {
-    db.collection('reports').doc(k).update({
-        dismissed: true, dismissedBy: currentAdmin.name, dismissedAt: Date.now()
-    }).then(function() { showToast('Dismissed', 'success'); });
+/* ===== ACTIONS (Supabase) ===== */
+async function dismissReport(id) {
+    const { error } = await supabase.from('reports').update({
+        dismissed: true,
+        dismissed_by: currentAdmin.name,
+        dismissed_at: new Date().toISOString()
+    }).eq('id', id);
+
+    if (error) showToast('Error: ' + error.message, 'error');
+    else showToast('Dismissed', 'success');
 }
 
-function restoreReport(k) {
-    db.collection('reports').doc(k).update({
-        dismissed: false, dismissedBy: '', dismissedAt: null
-    }).then(function() { showToast('Restored', 'info'); });
+async function restoreReport(id) {
+    const { error } = await supabase.from('reports').update({
+        dismissed: false,
+        dismissed_by: null,
+        dismissed_at: null
+    }).eq('id', id);
+
+    if (error) showToast('Error: ' + error.message, 'error');
+    else showToast('Restored', 'info');
 }
 
-function deleteReport(k) {
+async function deleteReport(id) {
     if (confirm('Permanently delete this report?')) {
-        db.collection('reports').doc(k).delete().then(function() { showToast('Deleted', 'success'); });
+        const { error } = await supabase.from('reports').delete().eq('id', id);
+        if (error) showToast('Error: ' + error.message, 'error');
+        else showToast('Deleted', 'success');
     }
 }
 
 /* ===== VIEW REPORT MODAL ===== */
-function viewReport(k) {
-    var r = allReports[k]; if (!r) return;
+function viewReport(id) {
+    var r = allReports[id]; if (!r) return;
     var rc = getReasonClass(r.reason);
     var h = '';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Member Name</div>';
     h += '<div class="modal-detail-value" style="font-size:17px;font-weight:700">' + esc(r.name) + '</div></div>';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Reason</div>';
     h += '<div class="modal-detail-value"><span class="report-reason-badge ' + rc + '" style="font-size:12px;padding:5px 12px">' + esc(r.reason) + '</span></div></div>';
-    if (r.linkNumber) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Link Number</div>'; h += '<div class="modal-detail-value" style="color:var(--accent);font-weight:600">' + esc(r.linkNumber) + '</div></div>'; }
-    if (r.gapDetails) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Gap Details</div>'; h += '<div class="modal-detail-value" style="color:var(--danger);font-weight:600">' + esc(r.gapDetails) + '</div></div>'; }
+    if (r.link_number) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Link Number</div>'; h += '<div class="modal-detail-value" style="color:var(--accent);font-weight:600">' + esc(r.link_number) + '</div></div>'; }
+    if (r.gap_details) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Gap Details</div>'; h += '<div class="modal-detail-value" style="color:var(--danger);font-weight:600">' + esc(r.gap_details) + '</div></div>'; }
     if (r.description) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Description</div>'; h += '<div class="modal-detail-value">' + esc(r.description) + '</div></div>'; }
-    if (r.reportDate) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Date</div>'; h += '<div class="modal-detail-value">' + esc(r.reportDate) + '</div></div>'; }
+    if (r.report_date) { h += '<div class="modal-detail-row"><div class="modal-detail-label">Report Date</div>'; h += '<div class="modal-detail-value">' + esc(r.report_date) + '</div></div>'; }
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Reported By</div>';
-    h += '<div class="modal-detail-value"><i class="fas fa-user-shield" style="color:var(--accent);margin-right:6px"></i>' + esc(r.admin) + '</div></div>';
+    h += '<div class="modal-detail-value"><i class="fas fa-user-shield" style="color:var(--accent);margin-right:6px"></i>' + esc(r.admin_name) + '</div></div>';
     h += '<div class="modal-detail-row"><div class="modal-detail-label">Submitted At</div>';
-    h += '<div class="modal-detail-value">' + fmtTime(r.createdAt) + '</div></div>';
+    h += '<div class="modal-detail-value">' + fmtTime(r.created_at) + '</div></div>';
     if (r.dismissed) {
         h += '<div class="modal-detail-row"><div class="modal-detail-label">Status</div>';
-        h += '<div class="modal-detail-value" style="color:var(--success)"><i class="fas fa-check-circle"></i> Dismissed by ' + esc(r.dismissedBy || 'Unknown');
-        if (r.dismissedAt) h += ' - ' + fmtTime(r.dismissedAt);
+        h += '<div class="modal-detail-value" style="color:var(--success)"><i class="fas fa-check-circle"></i> Dismissed by ' + esc(r.dismissed_by || 'Unknown');
+        if (r.dismissed_at) h += ' - ' + fmtTime(r.dismissed_at);
         h += '</div></div>';
     }
     if (r.screenshots && r.screenshots.length > 0) {
@@ -523,10 +593,10 @@ function handleSearch() {
     if (sg.length > 0) {
         var max = Math.min(sg.length, 12);
         for (var i = 0; i < max; i++) {
-            html += '<div class="search-suggestion-item" onclick="selectSug(\'' + sg[i].k + '\')">';
+            html += '<div class="search-suggestion-item" onclick="selectSug(' + sg[i].k + ')">';
             html += '<div class="suggestion-icon"><i class="fas fa-user"></i></div><div>';
             html += '<div class="suggestion-name">' + esc(sg[i].r.name) + '</div>';
-            html += '<div class="suggestion-reason">' + esc(sg[i].r.reason) + ' - ' + fmtTime(sg[i].r.createdAt) + '</div></div></div>';
+            html += '<div class="suggestion-reason">' + esc(sg[i].r.reason) + ' - ' + fmtTime(sg[i].r.created_at) + '</div></div></div>';
         }
     } else {
         html = '<div class="search-suggestion-item"><div class="suggestion-icon"><i class="fas fa-search"></i></div><div><div class="suggestion-name" style="color:var(--text-muted)">No results</div></div></div>';
@@ -551,12 +621,15 @@ function getReasonClass(r) {
 
 function fmtTime(ts) {
     if (!ts) return '';
-    var diff = Date.now() - ts;
+    var d = new Date(ts); // Supabase returns ISO string, convert to Date object
+    var now = new Date();
+    var diff = now - d;
+    
     if (diff < 60000) return 'Just now';
     if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
     if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
     if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
-    var d = new Date(ts);
+    
     var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
 }
@@ -580,6 +653,7 @@ function showToast(msg, type) {
 function showLoading() { $('loadingOverlay').classList.remove('hidden'); }
 function hideLoading() { $('loadingOverlay').classList.add('hidden'); }
 
+// Expose to window
 window.removeFile = removeFile;
 window.dismissReport = dismissReport;
 window.restoreReport = restoreReport;
