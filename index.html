@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <!-- Firebase App (the core Firebase SDK) -->
+<!-- Supabase JS Library -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
     <div id="loginScreen" class="login-screen">
@@ -199,95 +202,4 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
     <script src="app.js"></script>
 </body>
-                                   </html>                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-pen"></i> Describe More (Optional)</label>
-                        <textarea id="singleDesc" placeholder="Add more details..." class="form-textarea"></textarea>
-                    </div>
-                    <button class="btn-submit" id="singleSubmit"><i class="fas fa-paper-plane"></i> Submit Report</button>
-                </div>
-                <div class="report-form hidden" id="multipleForm">
-                    <div class="form-group">
-                        <label><i class="fas fa-exclamation-triangle"></i> Report Type</label>
-                        <select id="multipleReason" class="form-select">
-                            <option value="">-- Select Type --</option>
-                            <option value="Late All Done">Late All Done</option>
-                            <option value="Support Gap">Support Gap</option>
-                            <option value="Sticker/Emoji/NC Comment">Sticker / Emoji / NC Comment</option>
-                            <option value="Joined Duplicate Group">Joined Duplicate Group</option>
-                            <option value="Obscene Behavior">Obscene Behavior</option>
-                            <option value="Posted Double Link">Posted Double Link</option>
-                            <option value="Others">Others</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-list"></i> Paste Full List</label>
-                        <textarea id="multipleList" placeholder="Paste the full notice/list here..." class="form-textarea large"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-calendar"></i> Report Date</label>
-                        <input type="date" id="multipleDate" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-paperclip"></i> Screenshot (Optional)</label>
-                        <div class="file-upload-area">
-                            <input type="file" id="multipleFile" accept="image/*" multiple class="file-input-real">
-                            <label for="multipleFile" class="file-upload-label">
-                                <i class="fas fa-cloud-upload-alt"></i>
-                                <span>Tap to upload screenshots</span>
-                            </label>
-                            <div class="file-preview" id="multiplePreview"></div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-pen"></i> Additional Notes (Optional)</label>
-                        <textarea id="multipleDesc" placeholder="Any additional notes..." class="form-textarea"></textarea>
-                    </div>
-                    <button class="btn-parse" id="parseBtn"><i class="fas fa-eye"></i> Preview Parsed Names</button>
-                    <div class="parse-preview hidden" id="parsePreview">
-                        <h3><i class="fas fa-users"></i> Parsed Members</h3>
-                        <div id="parsedList"></div>
-                    </div>
-                    <button class="btn-submit" id="multipleSubmit"><i class="fas fa-paper-plane"></i> Submit All Reports</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal hidden" id="reportModal">
-        <div class="modal-overlay"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2><i class="fas fa-file-alt"></i> Report Details</h2>
-                <button class="modal-close" id="modalClose"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="modal-body" id="modalBody"></div>
-        </div>
-    </div>
-    <div class="toast-container" id="toastContainer"></div>
-    <div class="loading-overlay hidden" id="loadingOverlay">
-        <div class="spinner"></div>
-        <p>Processing...</p>
-    </div>
-    <footer class="footer">
-        <div class="footer-content">
-            <div class="footer-logo">
-                <i class="fas fa-link"></i>
-                <span>Support Link Box</span>
-            </div>
-            <div class="footer-divider"></div>
-            <div class="footer-brand">
-                <i class="fas fa-fire"></i> Motivation Premier
-            </div>
-            <div class="footer-copyright">
-                &copy; 2026 Support Link Box X Motivation Premier. All Rights Reserved.
-            </div>
-            <div class="footer-tagline">
-                <i class="fas fa-shield-alt"></i> Admin Report Management System
-            </div>
-        </div>
-    </footer>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-    <script src="app.js"></script>
-</body>
-</html>
+                                                                         </html>
